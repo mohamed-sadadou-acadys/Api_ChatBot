@@ -1,0 +1,750 @@
+import queue 
+import atexit
+# import signal
+import threading
+from RAG.scripts.Generation import RAG, StoppingCriteriaList,StoppingCriteriaSub
+from API.utils import actual_datetime, change_to_datetime, timedelta, shorten_datetime
+from RAG.scripts.Preprocessing import Preprocessing
+from RAG.scripts.Extract_data import extract_text_pptx
+# from RAG.scripts.Embeddings import WordEmbedding
+
+
+
+class ThreadedGenerator:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.is_running = False
+        # self.is_stoped = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        item = self.queue.get()
+          
+        if item is StopIteration: 
+            # self.is_stoped = False
+            raise item
+
+        return item
+
+    def send(self, data):
+        self.queue.put(data)
+
+    def close(self):
+        print("CLOSE")
+        self.is_running = False
+        self.queue.put(StopIteration)
+    
+
+
+def setup_model(myRAG,device):
+    print("device : ",device)
+    g = ThreadedGenerator()
+    model, tokenizer = myRAG.get_model_for_GPU(device=device)
+    stop_words = myRAG.stop_sequence_list
+    stop_words_ids = [tokenizer(stop_word, return_tensors='pt')['input_ids'].squeeze() for stop_word in stop_words]
+    stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stop_words_ids)])
+
+    # else : # len(gpu) == 0
+    #     model1, tokenizer = myRAG.get_model_langchain(g)
+    #     model2 = None
+    #     stopping_criteria = None 
+
+    return {'generator' : g,
+            'model' : model, 
+            'tokenizer' : tokenizer, 
+            'stopping_criteria':stopping_criteria,
+            'currentSid' : ''}
+
+
+def send_wait(app,socketio):
+    while True:
+        socketio.sleep(25)  # Envoyer un ping toutes les 10 secondes
+        for requestInQueue in app.config['queueRequest']:
+            socketio.emit('event', {'message': 'wait'}, room=requestInQueue["sid"])
+
+
+def chatbot_stream_generation_old(app,socketio):  
+
+    while app.config['generator'].queue.empty():
+        if len(app.config['queueRequest']) > 0:
+            currentRequest = app.config['queueRequest'].pop(0)
+            app.config['currentSID'] = currentRequest['sid']
+            print('ok_chat',currentRequest)
+            
+            if currentRequest["event"] == "create_chat":
+                history,conversations,i_to_add = [], None, None
+
+            elif currentRequest["event"] == "add_chat":
+                history,conversations,i_to_add = search_conversation(app,
+                                                                     socketio,
+                                                                     app.config['currentSID'],
+                                                                    currentRequest["id_user"],
+                                                                    currentRequest["id_conv"])
+                
+            
+            ids_formations = search_ids_formation(app,
+                                                  socketio,
+                                                  app.config['currentSID'],
+                                                  currentRequest["id_user"])
+
+            if history is not None : 
+                              
+                if len(app.config['gpu'])==1 : 
+                   list_ids_RAG,n_token = app.config['RAG'].run_for_gpu(app.config['model1'],
+                                                app.config['tokenizer'],
+                                                currentRequest['question'],
+                                                app.config['generator'],
+                                                history=history,
+                                                stopping_criteria = app.config['stopping_criteria'],
+                                                WordEmbedding=app.config['WordEmbedding'],
+                                                ids_formation=ids_formations)
+
+
+                else : #len==0 means on CPU
+                    list_ids_RAG,n_token = app.config['RAG'].run_for_cpu(app.config['model1'],
+                                                app.config['tokenizer'],
+                                                currentRequest['question'],
+                                                app.config['generator'],
+                                                history=history,
+                                                WordEmbedding=app.config['WordEmbedding'],
+                                                ids_formation=ids_formations)
+                
+
+            print('OK GO SEND')
+
+            emit_and_stock_generation(app,
+                                    socketio,
+                                    app.config['currentSID'],
+                                    currentRequest["event"],
+                                    currentRequest["id_conv"],
+                                    currentRequest["id_user"],
+                                    currentRequest["question"],
+                                    conversations,
+                                    list_ids_RAG,
+                                    n_token,
+                                    i_to_add)
+            
+            app.config['currentSID']=""
+
+
+def chatbot_stream_generation_old2(app,socketio):  
+
+    while any([app.config[f'gpu:{n}']['generator'].queue.empty() for n in app.config["gpu"].get_gpu()]):
+        if len(app.config['queueRequest']) > 0:
+            print('ok_chat',len(app.config['queueRequest']))
+            for n in app.config["gpu"].get_gpu(): 
+                if app.config[f'gpu:{n}']['generator'].queue.empty() :
+                    currentRequest = app.config['queueRequest'].pop(0)
+                    app.config[f'gpu:{n}']['currentSid'] = currentRequest['sid']
+                
+                    if currentRequest["event"] == "create_chat":
+                        history,conversations,i_to_add = [], None, None
+
+                    elif currentRequest["event"] == "add_chat":
+                        history,conversations,i_to_add = search_conversation(app,
+                                                                            socketio,
+                                                                            app.config[f'gpu:{n}']['currentSid'],
+                                                                            currentRequest["id_user"],
+                                                                            currentRequest["id_conv"])
+                        
+                    
+                    ids_formations = search_ids_formation(app,
+                                                        socketio,
+                                                        app.config[f'gpu:{n}']['currentSid'],
+                                                        currentRequest["id_user"])
+
+                    if history is not None : 
+
+                        app.config[f'gpu:{n}']['stopping_criteria'].change_to_False()     
+                        list_ids_RAG,n_token = app.config['RAG'].run_for_gpu(app.config[f'gpu:{n}']['model'],
+                                                        app.config[f'gpu:{n}']['tokenizer'],
+                                                        currentRequest['question'],
+                                                        app.config[f'gpu:{n}']['generator'],
+                                                        history=history,
+                                                        stopping_criteria = app.config[f'gpu:{n}']['stopping_criteria'],
+                                                        WordEmbedding=app.config['WordEmbedding'],
+                                                        ids_formation=ids_formations)
+
+
+
+                        # list_ids_RAG,n_token = app.config['RAG'].run_for_cpu(app.config['model1'],
+                        #                                 app.config['tokenizer'],
+                        #                                 currentRequest['question'],
+                        #                                 app.config['generator'],
+                        #                                 history=history,
+                        #                                 WordEmbedding=app.config['WordEmbedding'],
+                        #                                 ids_formation=ids_formations)
+                        
+
+                    print('OK GO SEND')
+
+                    emit_and_stock_generation(app,
+                                            socketio,
+                                            app.config[f'gpu:{n}']['generator'],
+                                            app.config[f'gpu:{n}']['currentSid'],
+                                            currentRequest["event"],
+                                            currentRequest["id_conv"],
+                                            currentRequest["id_user"],
+                                            currentRequest["question"],
+                                            conversations,
+                                            list_ids_RAG,
+                                            n_token,
+                                            i_to_add,
+                                            n)
+                print('break')
+                break
+
+import time
+def thread_chatbot(app,socketio):   
+
+
+    while True : #any([app.config[f'gpu:{n}']['generator'].is_running==False for n in app.config["gpu"].get_gpu()]):
+        print('attend')
+        sleep(3)
+
+        if len(app.config['queueRequest']) > 0:
+            print('ok_chat',len(app.config['queueRequest']))
+            for n in app.config["gpu"].get_gpu() : 
+                print("gpu is running : ",n,app.config[f'gpu:{n}']['generator'].is_running)
+                if app.config[f'gpu:{n}']['generator'].is_running==False :
+                    app.config[f'gpu:{n}']['generator'].is_running=True
+                    currentRequest = app.config['queueRequest'].pop(0)
+                    app.config[f'gpu:{n}']['currentSid'] = currentRequest['sid']
+                    print(n,currentRequest["question"])
+                
+                    if currentRequest["event"] == "create_chat":
+                        history,conversations,i_to_add = [], None, None
+
+                    elif currentRequest["event"] == "add_chat":
+                        history,conversations,i_to_add = search_conversation(app,
+                                                                            socketio,
+                                                                            app.config[f'gpu:{n}']['currentSid'],
+                                                                            currentRequest["id_user"],
+                                                                            currentRequest["id_conv"])
+                        
+                    
+                    ids_formations = search_ids_formation(app,
+                                                        socketio,
+                                                        app.config[f'gpu:{n}']['currentSid'],
+                                                        currentRequest["id_user"])        
+
+                    print('OK GO SEND')
+                    threading.Thread(target=thread_stream_and_stock, 
+                                    args=(app,
+                                            socketio,
+                                            app.config[f'gpu:{n}']['generator'],
+                                            app.config[f'gpu:{n}']['currentSid'],
+                                            currentRequest["event"],
+                                            currentRequest["id_conv"],
+                                            currentRequest["id_user"],
+                                            currentRequest["question"],
+                                            conversations,
+                                            ids_formations,
+                                            history,
+                                            i_to_add,
+                                            n,)).start()
+
+                    print('break')
+                    break
+
+
+
+def search_conversation(app,socketio,sid,id_user,id_conv):
+
+    conversations_dict = app.config['Database'].getAllConversations(id_user)
+
+    if conversations_dict is None :
+        with app.app_context():  
+            socketio.emit('event', {'message': 'id_user not in database'}, room= sid)
+        return None, None, None
+
+
+    if conversations_dict["Conversations"] == [] :
+        with app.app_context():  
+            socketio.emit('event', {'message': 'id_conv not in database'}, room= sid)
+        return None, None, None
+    
+    convs_to_add, is_to_add = app.config['Database'].changeIDconvToI(conversations_dict["Conversations"],
+                                                                    id_conv)
+    
+    # create_history
+    history = [(convs_to_add[0]['Exchanges'][i]['question'].replace("\\n", "\n"),
+             convs_to_add[0]['Exchanges'][i]['answer'].replace("\\n", "\n")) for i in range(len(convs_to_add[0]['Exchanges']))]
+
+    return history, conversations_dict["Conversations"], is_to_add[0]
+
+
+def search_ids_formation(app,socketio,sid,id_user):
+
+    ids_formations_dict = app.config['Database'].getIdsFormation(id_user)
+
+    if ids_formations_dict is None :
+        with app.app_context():  
+            socketio.emit('event', {'message': 'id_user not in database'}, room= sid)
+        return None
+    
+    return list(map(str,ids_formations_dict["formations"]))
+    
+
+def emit_and_stock_generation_old(app,socketio,sid,event,id_conv,id_user,question,conversations,list_ids_RAG,n_token,i_to_add):
+
+    bot_response = ""
+    first_stop = True
+
+    for item in app.config['generator'] :
+
+        n_token['output'] +=1
+
+        if app.config['generator'].is_stoped : 
+            if first_stop : 
+
+                if bot_response[:len('<|assistant|>')]=='<|assistant|>':
+                    bot_response = bot_response[len('<|assistant|>'):]
+                if bot_response[:len('\\n')]=='\\n':
+                    bot_response = bot_response[len('\\n'):]
+
+                print(bot_response)
+                title = "Nouveau chat"
+                date = actual_datetime()
+                
+                if event == "create_chat":
+                    updated_count,id_conv = app.config['Database'].createConversation(id_user,
+                                                                                    question.replace("\n", "\\n"),
+                                                                                    date,
+                                                                                    title,
+                                                                                    bot_response,
+                                                                                    list_ids_RAG)
+
+
+
+                    if updated_count < 1 :
+                        with app.app_context():  
+                            socketio.emit('event', {'message': 'id_user not in database'}, room= sid)
+                        return 
+                    
+                    with app.app_context():  
+                        socketio.emit('chat_data', {'event': event,'date':date,'title':title,'id_conv':id_conv}, room= sid)
+
+                elif event == "add_chat":
+                    
+                    _ = app.config['Database'].addInteraction( id_user,
+                                                                i_to_add,
+                                                                question.replace("\n", "\\n"),
+                                                                bot_response,
+                                                                date,
+                                                                list_ids_RAG,
+                                                                conversations)
+                    with app.app_context():  
+                        socketio.emit('chat_data', {'event': event,'date':date}, room= sid)
+
+                first_stop = False
+
+    
+
+        else : 
+            print("item :",item)
+            bot_response += item.replace("\n", "\\n")
+            with app.app_context():  
+                socketio.emit('chat_token', 
+                              {'event': event, 'token': item.replace("\n", "\\n"),'id_conv':id_conv}, 
+                              room= sid)
+            print("item sent")
+
+    n_token['output'] -= 1
+    
+    store_n_token(app,n_token,id_user,id_conv)
+
+
+
+def thread_stream_and_stock(app,socketio,generator,sid,event,id_conv,id_user,question,conversations,ids_formations,history,i_to_add,n):
+
+    app.config[f'gpu:{n}']['stopping_criteria'].change_to_False()     
+    list_ids_RAG,n_token = app.config['RAG'].run_for_gpu(app.config[f'gpu:{n}']['model'],
+                                    app.config[f'gpu:{n}']['tokenizer'],
+                                    question,
+                                    app.config[f'gpu:{n}']['generator'],
+                                    history=history,
+                                    stopping_criteria = app.config[f'gpu:{n}']['stopping_criteria'],
+                                    WordEmbedding=app.config['WordEmbedding'],
+                                    ids_formation=ids_formations)
+    
+
+    bot_response = ""
+
+    for item in generator :
+
+        n_token['output'] +=1
+
+        print("item : ",item,", device : ",n, "sid : ",sid)
+        bot_response += item.replace("\n", "\\n")
+        with app.app_context():  
+            socketio.emit('chat_token', 
+                            {'event': event, 'token': item.replace("\n", "\\n"),'id_conv':id_conv}, 
+                            room= sid)
+        print("item sent")
+
+
+    print(bot_response)
+    title = "Nouveau chat"
+    date = actual_datetime()
+            
+    if event == "create_chat":
+        updated_count,id_conv = app.config['Database'].createConversation(id_user,
+                                                                        question.replace("\n", "\\n"),
+                                                                        date,
+                                                                        title,
+                                                                        bot_response,
+                                                                        list_ids_RAG)
+
+
+
+        if updated_count < 1 :
+            with app.app_context():  
+                socketio.emit('event', {'message': 'id_user not in database'}, room= sid)
+            return 
+        
+        with app.app_context():  
+            socketio.emit('chat_data', {'event': event,'date':date,'title':title,'id_conv':id_conv}, room= sid)
+
+    elif event == "add_chat":
+                
+        _ = app.config['Database'].addInteraction( id_user,
+                                                    i_to_add,
+                                                    question.replace("\n", "\\n"),
+                                                    bot_response,
+                                                    date,
+                                                    list_ids_RAG,
+                                                    conversations)
+        with app.app_context():  
+            socketio.emit('chat_data', {'event': event,'date':date}, room= sid)
+
+    # We remove one token corresponding to the websocket init token
+    n_token['output'] -= 1
+
+    store_n_token(app,n_token,id_user,id_conv)
+
+
+# def emit_and_stock_generation_v2(app,socketio,sid,event,id_conv,id_user,question,conversations,list_ids_RAG,n_token,i_to_add):
+
+#     bot_response = ""
+
+#     for item in app.config['generator'] :
+
+#         n_token['output'] +=1
+
+#         print("item :",item)
+
+#         bot_response += item.replace("\n", "\\n")
+#         with app.app_context():  
+#             socketio.emit('chat_token', 
+#                             {'event': event, 'token': item.replace("\n", "\\n"),'id_conv':id_conv}, 
+#                             room= sid)
+#         print("item sent")
+        
+
+#     if bot_response[:len('<|assistant|>')]=='<|assistant|>':
+#         bot_response = bot_response[len('<|assistant|>'):]
+#     if bot_response[:len('\\n')]=='\\n':
+#         bot_response = bot_response[len('\\n'):]
+
+#     print(bot_response)
+#     title = "Nouveau chat"
+#     date = actual_datetime()
+    
+#     if event == "create_chat":
+#         updated_count,id_conv = app.config['Database'].createConversation(id_user,
+#                                                                         question.replace("\n", "\\n"),
+#                                                                         date,
+#                                                                         title,
+#                                                                         bot_response,
+#                                                                         list_ids_RAG)
+
+
+
+#         if updated_count < 1 :
+#             with app.app_context():  
+#                 socketio.emit('event', {'message': 'id_user not in database'}, room= sid)
+#             return 
+        
+#         with app.app_context():  
+#             socketio.emit('chat_data', {'event': event,'date':date,'title':title,'id_conv':id_conv}, room= sid)
+
+#     elif event == "add_chat":
+        
+#         _ = app.config['Database'].addInteraction( id_user,
+#                                                     i_to_add,
+#                                                     question.replace("\n", "\\n"),
+#                                                     bot_response,
+#                                                     date,
+#                                                     list_ids_RAG,
+#                                                     conversations)
+#         with app.app_context():  
+#             socketio.emit('chat_data', {'event': event,'date':date}, room= sid)
+
+#     n_token['output'] -= 1
+    
+#     store_n_token(app,n_token,id_user,id_conv)
+
+
+
+
+def store_n_token(app,n_token,id_user,id_conv):
+
+    previous_n_token = app.config['Database'].getObjectsInConv(id_user,
+                                                    id_conv,
+                                                    ["n_token"])["Conversations"][0]["n_token"]
+
+    
+    print(previous_n_token)
+    print(n_token)
+
+    new_n_token = {
+        cle: previous_n_token.get(cle, 0) + n_token.get(cle, 0)
+        for cle in set(previous_n_token) | set(n_token)
+    }
+    
+    print(new_n_token)
+    _ = app.config['Database'].updateObjectsInConv(["n_token"],
+                                                           id_user,
+                                                           id_conv,
+                                                           [new_n_token])
+
+
+
+def preprocess_new_data(tokenizer,path):
+
+    preprocessing = Preprocessing()
+    #formation_title = app.config['Database'].getFormation(id_formation)['title']
+    df_formation = extract_text_pptx(ppt_file=path)
+    df_formation = preprocessing.remove_nan_values(df_formation)
+    df_formation = preprocessing.add_token_size(tokenizer,df_formation)
+    df_formation = df_formation[df_formation['Taille_token']>100]
+    return df_formation
+
+    #df_formation.to_csv(f"RAG/processed_data/datapreprocess_{id_formation}.csv")
+
+
+# def embed_new_data(id_formation,id_doc,df_formation):
+#     myWordEmbedding = WordEmbedding()
+#     dataList = myWordEmbedding.process_text(df_formation)
+#     return myWordEmbedding.add_documents(id_formation,id_doc,dataList)
+
+# def embed_updated_data(id_formation,id_doc,df_formation):
+#     myWordEmbedding = WordEmbedding()
+#     dataList = myWordEmbedding.process_text(df_formation)
+#     return myWordEmbedding.update_documents(id_formation,id_doc,dataList)
+
+# def delete_embedded_data(id_doc):
+#     myWordEmbedding = WordEmbedding()
+#     return myWordEmbedding.delete_documents(id_doc)
+
+# def get_embedded_data(id_formation):
+#     myWordEmbedding = WordEmbedding()
+#     return myWordEmbedding.get_documents(id_formation)
+
+
+def initialize_scheduler(app,scheduler):
+    scheduler.add_job(delete_conversations_by_date, 
+                            'cron', 
+                            args=(app, 355, 0, 0), 
+                            hour=0, 
+                            minute=0,
+                            id = 'delete_conversation') 
+    
+    scheduler.start()
+
+    # Arrête le planificateur lorsque l'application se termine
+    atexit.register(lambda: scheduler.shutdown())
+
+    # # Gérer les signaux d'arrêt pour arrêter proprement le planificateur
+    # def signal_handler(signal,arg):
+    #     scheduler.shutdown()
+
+    # signal.signal(signal.SIGINT, signal_handler)
+    # signal.signal(signal.SIGTERM, signal_handler)
+
+
+
+def delete_conversations_by_date(app,day_period,hour,minute):
+    
+    oldest_day = shorten_datetime(actual_datetime()) - timedelta(days = day_period)
+
+    ids_user = app.config['Database'].getAllUser()
+    deleted_count = 0
+
+    for id_user in ids_user :
+        conversations = app.config['Database'].getAllConversations(id_user)['Conversations']
+        id_conv_to_delete = []
+
+        for id_conv,conversation in enumerate(conversations) :
+
+            if change_to_datetime(conversation['last_update']) < change_to_datetime(oldest_day):
+                id_conv_to_delete.append(id_conv)
+
+        _ = app.config['Database'].deleteConversation(id_user,
+                                                    id_conv_to_delete,
+                                                    conversations)
+        
+        deleted_count += len(id_conv_to_delete)         
+
+    print(f'n_deleted : {deleted_count}')
+
+
+def merge_n_token(all_n_token_object,date1,date2):
+
+    token_sum = {}
+
+    for n_token_object in all_n_token_object : 
+        for n_token_set in n_token_object['Conversations']:
+            for key, value in n_token_set['n_token'].items():
+
+                if date1 and date2: 
+                # Ajouter ou mettre à jour la valeur dans le dictionnaire fusionné
+                    if change_to_datetime(date1) < change_to_datetime(n_token_set['last_update']) and change_to_datetime(n_token_set['last_update']) < change_to_datetime(date2) :
+                        token_sum[key] = token_sum.get(key, 0) + value
+
+                else :
+                    token_sum[key] = token_sum.get(key, 0) + value
+
+    return token_sum
+
+# def chatbot_response(app,query,g,history=[]):
+#     myRAG = app.config['myRAG']
+#     print('ok chat')
+#     #query = "Quels séminaires parlent de Georges Bressange ?"
+#     try :
+#         generated_text = myRAG.run_from_langchain(app.config['model'],
+#                                               app.config['tokenizer'],
+#                                               query,
+#                                               history=history,
+#                                               with_RAG=False)
+#     finally :
+#         g.close()
+
+#     return generated_text
+
+
+
+# @app.route(f'{root}/chat', methods=['PUT'])
+# def add_chat():
+#     json_file = request.json
+#     json_file['id_user'] = request.args.get('id_user')
+#     json_file['id_conv'] = request.args.get('id_conv')
+
+
+#     schema = {
+#     "type": "object",
+#     "properties": {
+#         "id_user": {"type": "string",
+#                     "pattern": "^[0-9a-fA-F]{24}$"},
+#         "id_conv": {"type": "string",
+#                     "pattern": "^-?[0-9]+$"},
+#         "question": {"type": "string"}
+#     },
+#     "required": ["id_user","id_conv","question"]
+#     }
+    
+#     try:
+#         validate(instance=json_file, schema=schema)
+#     except ValidationError as e:
+#         return jsonify({"error": str(e)}), 400
+
+#     conversations = app.config['Database'].getAllConversations(json_file['id_user'])
+
+#     if conversations is None :
+#         return {'error': 'id_user not in database'}, 404
+    
+#     if len(conversations["Conversations"]) < int(json_file['id_conv'])+1 :
+#         return {'error': 'id_conv not in database'}, 404
+    
+#     # Stocker le message et la réponse dans notre "base de données"
+#     #history = create_history(conversations['Conversations'][int(json_file['id_conv'])]['Exchanges'])
+
+#     #bot_response = chatbot_response(json_file.get('question'),history) 
+#     print(len(conversations['Conversations'][int(json_file['id_conv'])]["Exchanges"]))
+#     if len(conversations['Conversations'][int(json_file['id_conv'])]["Exchanges"]) == 1:
+#         bot_response = "Le machine learning, également appelé apprentissage automatique, est une partie \
+# de l'intelligence artificielle (IA) qui permet aux ordinateurs d'apprendre d'eux-mêmes à partir \
+# de données et de faire des prédictions ou des décisions sans être programmés explicitement pour \
+# effectuer la tâche. Ce processus d'apprentissage implique généralement de fournir au modèle \
+# d'apprentissage automatique un ensemble de données (connu sous le nom d'ensemble d'entraînement), \
+# à partir duquel il peut extraire des motifs et des tendances. Ces modèles utilisent ensuite ces \
+# connaissances pour faire des prédictions ou des décisions sur de nouvelles données."
+#     elif len(conversations['Conversations'][int(json_file['id_conv'])]["Exchanges"]) == 2:
+#         bot_response = "Le NLP (Natural Language Processing) et le NLU (Natural Language Understanding) \
+# sont tous deux des spécialités de l'IA (Intelligence Artificielle) qui ont pour objet de traiter \
+# les langues naturelles (compris les textes ou les conversations orales). Mais il y a une différence \
+# essentielle entre ces deux techniques : \n \
+# Le NLP a pour but d'interpreter le contenu d'un texte et de le convertir en information pouvant être \
+# utilisée pour prendre des décisions. Son objectif est donc d'extraire des informations pertinentes \
+# auprès d'un flux continu de textes. Cela inclut la mise en forme des textes (par exemple la normalisation \
+# des écritures ou la suppression des arrêts inutiles), le dépoussiérage (élimination des éléments non pertinents) \
+# et la classification ou la trie (d'après un critère choisi). \n \
+# Le NLU, lui, a pour but d'appréhender le sens et l'intention d'un texte. Il permet d'analyser et d'explorer le sens \
+# profond et la signification d'un message ou d'un document, en tenant compte de la nuance de la communication. Ce n'est \
+# pas une simple recherche de synonymes ou de traductions, mais une compréhension complète de la communication humaine. \
+# Le NLU est souvent considéré comme une sous-technique du NLP. \n "
+#     elif len(conversations['Conversations'][int(json_file['id_conv'])]["Exchanges"]) == 3:
+#         bot_response = "En résumé, le NLP s'occupe de l'extraction d'informations d'un texte pour en tirer des conclusions, \
+# tandis que le NLU s'attache à la compréhension complète d'un message ou d'un document, en tenant compte de la \
+# subtilité de la communication humaine."
+#     else :
+#         bot_response = "Roh tu me soûles avec tes questions là"
+
+#     context = 'Context'
+#     date = actual_datetime()
+
+#     _ = app.config['Database'].addInteraction(json_file,
+#                                                 json_file['id_user'],
+#                                                 int(json_file['id_conv']),
+#                                                 bot_response,
+#                                                 date,
+#                                                 context,
+#                                                 conversations["Conversations"])
+
+#     return jsonify({'answer':bot_response,"date":date}), 200
+
+
+# @app.route(f'{root}/chat', methods=['POST'])
+# def create_chat():
+#     json_file = request.json
+
+#     schema = {
+#     "type": "object",
+#     "properties": {
+#         "id_user": {"type": "string",
+#                     "pattern": "^[0-9a-fA-F]{24}$"},
+#         "question": {"type": "string"}
+#     },
+#     "required": ["id_user","question"]
+#     }
+
+#     try:
+#         validate(instance=json_file, schema=schema)
+#     except ValidationError as e:
+#         return jsonify({"error": str(e)}), 400
+
+    
+#     # Stocker le message et la réponse dans notre "base de données"
+#     #bot_response = chatbot_response(json_file.get('question'))  
+#     bot_response = "Bonjour, je suis AcaDOC, le chatbot d'Acadys. Comment puis je vous aider ?"
+#     title = "Title"
+#     context = 'Context'
+#     date = actual_datetime()
+
+#     updated_count, id_conv = app.config['Database'].createConversation(json_file,
+#                                                                 date,
+#                                                                 title,
+#                                                                 bot_response,
+#                                                                 context)
+    
+#     if updated_count < 1 :
+#         return jsonify({'error': 'id_user not in database'}), 404
+    
+
+#     return jsonify({'answer':bot_response,'date':date,'title':title,'id_conv':id_conv}), 201
+
+
+
