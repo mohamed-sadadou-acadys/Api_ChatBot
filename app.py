@@ -754,6 +754,14 @@ def create_data_formation():
         print("erreur de validation")
         return jsonify({"error": str(e)}), 400
     print("validation ok")
+     # Afficher tous les documents dans la base de données vectorielle
+    print("Documents actuellement dans la base de données vectorielle:")
+    all_documents = app.config['WordEmbedding'].get_documents()
+    for formation_id, doc_ids in all_documents.items():
+        print(f"Formation ID: {formation_id}")
+        for doc_id in doc_ids:
+            print(f"  Document ID: {doc_id}")
+    print(app.config['WordEmbedding'])
     for doc in json_file['docs']:
         print("dans le for ok")
         if app.config['WordEmbedding'].is_doc_in_db(doc['id']) :
