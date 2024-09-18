@@ -6,6 +6,7 @@ import threading
 from RAG.scripts.Generation import RAG, StoppingCriteriaList,StoppingCriteriaSub
 from API.utils import actual_datetime, change_to_datetime, timedelta, shorten_datetime
 from RAG.scripts.Preprocessing import Preprocessing
+from RAG.scripts.ExternalPreprocessing import ExternalProcessing
 import time
 
 
@@ -227,6 +228,7 @@ def thread_stream_and_stock(app,socketio,sid,event,id_conv,id_user,question,conv
                                     history=history,
                                     stopping_criteria = app.config[f'gpu:{n}']['stopping_criteria'],
                                     WordEmbedding=app.config['WordEmbedding'],
+                                    ExternalWordEmbedding=app.config['ExternalResourcesEmbedding'],
                                     ids_formation=ids_formations)
     
 
@@ -354,6 +356,28 @@ def preprocess_new_data(path):
     df_formation = preprocessing.remove_small_texts(df_formation)
 
     return df_formation
+
+def preprocess_external_data(path):
+    '''
+    Preprocesses a Word document to transform it into a DataFrame.
+    The text is extracted and structured based on the document's layout.
+    '''
+
+    # Initialize the external processing class
+    external_processing = ExternalProcessing()
+
+    # Ensure the document is a Word document (.doc or .docx)
+    if path[path.rfind('.')+1:] not in ['doc', 'docx']:
+        raise ValueError("This function only supports Word documents with .doc or .docx extensions.")
+
+    # Extraction and structuring for Word Documents
+    df_formation = external_processing.extract_text_from_docx(docx_file=path)
+
+    # If needed, remove rows with NaN or small texts here
+    df_formation = df_formation.dropna().reset_index(drop=True)
+
+    return df_formation
+
 
 
 def delete_conversations_by_date(app,day_period,hour,minute):

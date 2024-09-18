@@ -13,8 +13,9 @@ from urllib.parse import unquote
 import numpy as np
 from API.database import Database
 from RAG.scripts.Embeddings import WordEmbedding
+from RAG.scripts.ExternalEmbeddings import ExternalResourcesEmbedding
 from RAG.scripts.Generation import RAG
-from API.app_func import setup_model, thread_chatbot, send_wait, initialize_scheduler, delete_conversations_by_date, preprocess_new_data, merge_n_token, update_scheduler, server_gpu
+from API.app_func import setup_model, thread_chatbot, send_wait, initialize_scheduler, delete_conversations_by_date, preprocess_new_data, merge_n_token, update_scheduler, server_gpu, preprocess_external_data
 from API.utils import modify_json
 import json
 
@@ -71,6 +72,7 @@ with app.app_context():
     app.config['gpu'] = server_gpu(var_server.get("gpu"))
     app.config['Database'] = Database() 
     app.config['WordEmbedding'] = WordEmbedding()
+    app.config['ExternalResourcesEmbedding'] = ExternalResourcesEmbedding()
     app.config['RAG'] = RAG(var_RAG)
     app.config['queueRequest']= list() 
     app.config['Scheduler'] = BackgroundScheduler()
@@ -914,6 +916,180 @@ def delete_data_formation():
     return jsonify({}), 204
 
 
+### DATA PREPROCESSING ###
+
+@app.route(f'{root}/external_data', methods=['POST'])
+def create_external_data():
+    '''
+    Vectorizes and places new external documents in the RAG database.
+    '''
+
+    json_file = request.json
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "docs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "doc_title": {"type": "string"},
+                        "id": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{24}$"
+                        },
+                        "path": {
+                            "type": "string",
+                            "pattern": r".*\.(ppt|pptx|doc|docx|pdf)$"
+                        }
+                    },
+                    "required": ["doc_title", "id", "path"]
+                },
+                "minItems": 1
+            }
+        },
+        "required": ["docs"]
+    }
+
+    # Validate input data
+    try:
+        validate(instance=json_file, schema=schema)
+    except ValidationError as e:
+        return jsonify({"error": str(e)}), 400
+
+    for doc in json_file['docs']:
+        if app.config['ExternalResourcesEmbedding'].is_doc_in_db(doc['id']):
+            return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 500
+
+    for doc in json_file['docs']:
+        # Preprocess the new document to vectorize
+        df_data = preprocess_external_data(doc['path'])
+
+        # Vectorize the document into the database
+        app.config['ExternalResourcesEmbedding'].add_external_documents(
+            id_doc=doc['id'],
+            doc_title=doc['doc_title'],
+            document_content=' '.join(df_data['Contenu'])
+        )
+
+    return jsonify({}), 204
+
+
+@app.route(f'{root}/external_data', methods=['GET'])
+def get_external_data():
+    '''
+    Retrieves the IDs of all documents in the RAG database.
+    '''
+
+    # Retrieve the list of document IDs in the database
+    documents_list = app.config['ExternalResourcesEmbedding'].get_external_documents()
+
+    return jsonify(documents_list), 200
+
+
+@app.route(f'{root}/external_data', methods=['PUT'])
+def update_external_data():
+    '''
+    Vectorizes and updates external documents in the RAG.
+    '''
+
+    json_file = request.json
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "docs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "doc_title": {"type": "string"},
+                        "id": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{24}$"
+                        },
+                        "path": {
+                            "type": "string",
+                            "pattern": r".*\.(ppt|pptx|doc|docx|pdf)$"
+                        }
+                    },
+                    "required": ["doc_title", "id", "path"]
+                },
+                "minItems": 1
+            }
+        },
+        "required": ["docs"]
+    }
+
+    # Validate input data
+    try:
+        validate(instance=json_file, schema=schema)
+    except ValidationError as e:
+        return jsonify({"error": str(e)}), 400
+
+    for doc in json_file['docs']:
+        if app.config['ExternalResourcesEmbedding'].is_doc_in_db(doc['id']) is None:
+            return jsonify({"error": f"id_doc='{doc['id']}' doesn't exist in the database"}), 500
+
+    for doc in json_file['docs']:
+        # Preprocess the document to vectorize
+        df_data = preprocess_external_data(doc['path'])
+
+        # Vectorize the document into the database, archiving the old document
+        app.config['ExternalResourcesEmbedding'].update_external_document(
+            id_doc=doc['id'],
+            doc_title=doc['doc_title'],
+            document_content=' '.join(df_data['Contenu'])
+        )
+
+    return jsonify({}), 204
+
+
+@app.route(f'{root}/external_data', methods=['DELETE'])
+def delete_external_data():
+    '''
+    Deletes documents from the RAG database.
+    '''
+
+    json_file = request.json
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "docs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{24}$"
+                        }
+                    },
+                    "required": ["id"]
+                },
+                "minItems": 1
+            }
+        },
+        "required": ["docs"]
+    }
+
+    # Validate input data
+    try:
+        validate(instance=json_file, schema=schema)
+    except ValidationError as e:
+        return jsonify({"error": str(e)}), 400
+
+    for doc in json_file['docs']:
+        if app.config['ExternalResourcesEmbedding'].is_doc_in_db(doc['id']) is None:
+            return jsonify({"error": f"id_doc='{doc['id']}' doesn't exist in the database"}), 500
+
+    for doc in json_file['docs']:
+        # Delete the document based on its ID
+        app.config['ExternalResourcesEmbedding'].delete_external_document(doc['id'])
+
+    return jsonify({}), 204
 
 
 ### DATA ANALYSIS ###
@@ -1021,7 +1197,6 @@ def get_token_analysis():
         n_token
 
     return jsonify(n_token), 200
-
 
 
 ### PARAMETERS ###
