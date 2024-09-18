@@ -757,6 +757,7 @@ def create_data_formation():
     for doc in json_file['docs']:
 
         if app.config['WordEmbedding'].is_doc_in_db(doc['id']) :
+            print(jsonify({'error': f"id_doc='{doc['id']}' already in the database"}))
             return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 500
 
 
