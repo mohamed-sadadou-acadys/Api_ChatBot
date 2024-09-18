@@ -742,7 +742,11 @@ def create_data_formation():
 
     "required": ["id_formation","formation_title","docs"]
     }
-
+    print("###")
+    print(json_file)
+    print("###")
+    print(schema)
+    print("###")
     # Validation des données d'entrée
     try:
         validate(instance=json_file, schema=schema)
