@@ -747,6 +747,7 @@ def create_data_formation():
     try:
         validate(instance=json_file, schema=schema)
     except ValidationError as e:
+        print("erreur de validation")
         return jsonify({"error": str(e)}), 400
     
     for doc in json_file['docs']:
