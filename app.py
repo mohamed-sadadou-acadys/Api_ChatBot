@@ -742,36 +742,37 @@ def create_data_formation():
 
     "required": ["id_formation","formation_title","docs"]
     }
-    print("###")
-    print(json_file)
-    print("###")
-    print(schema)
-    print("###")
+    # print("###")
+    # print(json_file)
+    # print("###")
+    # print(schema)
+    # print("###")
     # Validation des données d'entrée
     try:
         validate(instance=json_file, schema=schema)
     except ValidationError as e:
         print("erreur de validation")
         return jsonify({"error": str(e)}), 400
-    
+    print("validation ok")
     for doc in json_file['docs']:
-
+        print("dans le for ok")
         if app.config['WordEmbedding'].is_doc_in_db(doc['id']) :
             print(jsonify({'error': f"id_doc='{doc['id']}' already in the database"}))
             return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 500
 
-
+    print("existance ok")
     for doc in json_file['docs']:
         # Prétraite le nouveau document à vectoriser
+        print("vers le processing")
         df_formation = preprocess_new_data(doc['path'])
-
+        print("processing ok")
         # Vectorise le document dans la base de données 
         app.config['WordEmbedding'].add_documents(json_file['id_formation'],
                                                     doc['id'],
                                                     json_file['formation_title'],
                                                     doc['doc_title'],
                                                     df_formation)
-
+        print("add_documents ok")
         
     return jsonify({}), 204
 
