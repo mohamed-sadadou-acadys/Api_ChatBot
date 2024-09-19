@@ -762,11 +762,13 @@ def create_data_formation():
         for doc_id in doc_ids:
             print(f"  Document ID: {doc_id}")
     print(app.config['WordEmbedding'])
+     # Vérification de l'existence des documents
     for doc in json_file['docs']:
-        print("dans le for ok")
-        if app.config['WordEmbedding'].is_doc_in_db(doc['id']) :
-            print(jsonify({'error': f"id_doc='{doc['id']}' already in the database"}))
-            return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 500
+        print("Vérification du document...")
+        if app.config['WordEmbedding'].is_doc_in_db(doc['id']):
+            return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 400
+
+    print("Aucun document en doublon trouvé, ajout des nouveaux documents...")
 
     print("existance ok")
     for doc in json_file['docs']:
