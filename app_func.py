@@ -340,15 +340,15 @@ def preprocess_new_data(path):
     print(path[path.rfind('.')+1:])
     # Extraction et découpage pour des PowerPoints
     if path[path.rfind('.')+1:] in ['ppt','pptx']:
-        df_formation = preprocessing.extract_text_pptx(ppt_file=path)
+        df_formation = preprocessing.extract_text_pptx(ppt_url=path)
 
     # Extraction et découpage pour des Docs
     elif path[path.rfind('.')+1:] in ['doc','docx']: 
-        df_formation = preprocessing.extract_text_docx(doc_file=path)
+        df_formation = preprocessing.extract_text_docx(doc_url=path)
 
     # Extraction et découpage pour des PDFs
     elif path[path.rfind('.')+1:] in ['pdf']: 
-        df_formation = preprocessing.extract_text_pdf(pdf_file=path)
+        df_formation = preprocessing.extract_text_pdf(pdf_url=path)
     
     # Suppression des lignes avec des cases nulles
     df_formation = preprocessing.remove_nan_values(df_formation)
