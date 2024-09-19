@@ -773,7 +773,8 @@ def create_data_formation():
     print("existance ok")
     for doc in json_file['docs']:
         # Prétraite le nouveau document à vectoriser
-        print("vers le processing")
+        print("vers le processing,  le path :" )
+        print(doc['path'])
         df_formation = preprocess_new_data(doc['path'])
         print("processing ok")
         # Vectorise le document dans la base de données 

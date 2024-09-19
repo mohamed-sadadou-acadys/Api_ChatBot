@@ -336,7 +336,8 @@ def preprocess_new_data(path):
     '''
 
     preprocessing = Preprocessing()
-
+    print("le path a traité dans preprocess_new_data")
+    print(path[path.rfind('.')+1:])
     # Extraction et découpage pour des PowerPoints
     if path[path.rfind('.')+1:] in ['ppt','pptx']:
         df_formation = preprocessing.extract_text_pptx(ppt_file=path)
