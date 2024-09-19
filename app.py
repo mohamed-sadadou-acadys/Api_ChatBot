@@ -706,6 +706,13 @@ def delete_remark():
 
 ### DATA PREPROCESSING ###
 
+@app.route(f'{root}/docs', methods=['GET'])
+def get_docs_vect():
+    documents = app.config['WordEmbedding'].list_all_documents()
+    return jsonify(documents), 200
+
+
+
 @app.route(f'{root}/data', methods=['POST'])
 def create_data_formation():
     '''
