@@ -715,38 +715,31 @@ def create_data_formation():
     json_file = request.json
     json_file['id_formation'] = request.args.get('id_formation')
 
-
     schema = {
-    "type": "object",
-    "properties": {
-        "id_formation": {"type": "string",
-                    "pattern": "^[0-9a-fA-F]{24}$"},
-        "formation_title": {"type": "string"},
-        "docs":{
-            "type":"array",
-            "items": {
-                "type":"object",
-                "properties":
-                {
-                "doc_title": {"type": "string"},
-                "id": {"type": "string",
-                    "pattern": "^[0-9a-fA-F]{24}$"},
-                "path": {"type": "string",
-                          "pattern": r".*\.(ppt|pptx|doc|docx|pdf)$"}
+        "type": "object",
+        "properties": {
+            "id_formation": {"type": "string",
+                             "pattern": "^[0-9a-fA-F]{24}$"},
+            "formation_title": {"type": "string"},
+            "docs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "doc_title": {"type": "string"},
+                        "id": {"type": "string",
+                               "pattern": "^[0-9a-fA-F]{24}$"},
+                        "path": {"type": "string",
+                                 "pattern": r".*\.(ppt|pptx|doc|docx|pdf)$"}
+                    },
+                    "required": ["doc_title", "id", "path"]
                 },
-                "required": ["doc_title","id","path"]
-            },
-            "minItems": 1
-        }
-    },
-
-    "required": ["id_formation","formation_title","docs"]
+                "minItems": 1
+            }
+        },
+        "required": ["id_formation", "formation_title", "docs"]
     }
-    # print("###")
-    # print(json_file)
-    # print("###")
-    # print(schema)
-    # print("###")
+
     # Validation des données d'entrée
     try:
         validate(instance=json_file, schema=schema)
@@ -754,7 +747,8 @@ def create_data_formation():
         print("erreur de validation")
         return jsonify({"error": str(e)}), 400
     print("validation ok")
-     # Afficher tous les documents dans la base de données vectorielle
+    
+    # Afficher tous les documents dans la base de données vectorielle
     print("Documents actuellement dans la base de données vectorielle:")
     all_documents = app.config['WordEmbedding'].get_documents()
     for formation_id, doc_ids in all_documents.items():
@@ -762,30 +756,31 @@ def create_data_formation():
         for doc_id in doc_ids:
             print(f"  Document ID: {doc_id}")
     print(app.config['WordEmbedding'])
-     # Vérification de l'existence des documents
-    for doc in json_file['docs']:
-        print("Vérification du document...")
-        if app.config['WordEmbedding'].is_doc_in_db(doc['id']):
-            return jsonify({'error': f"id_doc='{doc['id']}' already in the database"}), 400
-
+    
     print("Aucun document en doublon trouvé, ajout des nouveaux documents...")
 
-    print("existance ok")
     for doc in json_file['docs']:
+        # Vérification de l'existence du document
+        if app.config['WordEmbedding'].is_doc_in_db(doc['id']):
+            print(f"id_doc='{doc['id']}' already in the database, skipping...")
+            continue
+
         # Prétraite le nouveau document à vectoriser
         print("vers le processing,  le path :" )
         print(doc['path'])
         df_formation = preprocess_new_data(doc['path'])
         print("processing ok")
+        
         # Vectorise le document dans la base de données 
         app.config['WordEmbedding'].add_documents(json_file['id_formation'],
-                                                    doc['id'],
-                                                    json_file['formation_title'],
-                                                    doc['doc_title'],
-                                                    df_formation)
+                                                  doc['id'],
+                                                  json_file['formation_title'],
+                                                  doc['doc_title'],
+                                                  df_formation)
         print("add_documents ok")
         
     return jsonify({}), 204
+
 
 
 @app.route(f'{root}/data', methods=['GET'])
