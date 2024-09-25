@@ -985,7 +985,8 @@ def create_external_data():
     for doc in json_file['docs']:
         # Preprocess the new document to vectorize
         df_data = preprocess_external_data(doc['path'])
-
+        print(f"on a le df :{df_data}")
+        print("=== go add external ===")
         # Vectorize the document into the database
         app.config['ExternalResourcesEmbedding'].add_external_documents(
             id_doc=doc['id'],

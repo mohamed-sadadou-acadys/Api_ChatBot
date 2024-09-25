@@ -376,6 +376,7 @@ def preprocess_external_data(path):
     if file_extension == 'docx':
         df_formation = external_processing.extract_text_from_docx(docx_url=path)
     elif file_extension == 'pdf':
+        print("on a un pdf")
         df_formation = external_processing.extract_text_from_pdf(pdf_url=path)
 
     # If needed, remove rows with NaN or small texts here
