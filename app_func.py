@@ -360,24 +360,29 @@ def preprocess_new_data(path):
 
 def preprocess_external_data(path):
     '''
-    Preprocesses a Word document to transform it into a DataFrame.
+    Preprocesses a document (Word or PDF) to transform it into a DataFrame.
     The text is extracted and structured based on the document's layout.
     '''
-
     # Initialize the external processing class
     external_processing = ExternalProcessing()
 
-    # Ensure the document is a Word document (.doc or .docx)
-    if path[path.rfind('.')+1:] not in ['doc', 'docx']:
-        raise ValueError("This function only supports Word documents with .doc or .docx extensions.")
+    # Check the file extension and ensure it's either a Word document or PDF
+    file_extension = path[path.rfind('.')+1:].lower()
+    
+    if file_extension not in ['docx', 'pdf']:
+        raise ValueError("This function only supports documents with .docx or .pdf extensions.")
 
-    # Extraction and structuring for Word Documents
-    df_formation = external_processing.extract_text_from_docx(docx_file=path)
+    # Extraction and structuring based on the file type
+    if file_extension == 'docx':
+        df_formation = external_processing.extract_text_from_docx(docx_url=path)
+    elif file_extension == 'pdf':
+        df_formation = external_processing.extract_text_from_pdf(pdf_url=path)
 
     # If needed, remove rows with NaN or small texts here
     df_formation = df_formation.dropna().reset_index(drop=True)
 
     return df_formation
+
 
 
 
