@@ -1378,3 +1378,14 @@ def update_parameters():
     
     return jsonify({}), 204
 
+@app.route(f'{root}/clear_external_data', methods=['POST'])
+def clear_external_data():
+    '''
+    Endpoint to clear all documents from the external vectorized database.
+    '''
+    try:
+        # Appel de la méthode pour vider la base de données
+        app.config['ExternalResourcesEmbedding'].clear_database()
+        return jsonify({"message": "Base de données vectorielle externe vidée avec succès."}), 200
+    except Exception as e:
+        return jsonify({"error": f"Erreur lors de la suppression des documents : {e}"}), 500
