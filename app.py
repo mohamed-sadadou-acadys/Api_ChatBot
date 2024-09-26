@@ -1003,10 +1003,18 @@ def get_external_data():
     Retrieves the IDs of all documents in the RAG database.
     '''
 
-    # Retrieve the list of document IDs in the database
-    documents_list = app.config['ExternalResourcesEmbedding'].get_external_documents()
+    try:
+        # Retrieve the list of document IDs in the database
+        documents_list = app.config['ExternalResourcesEmbedding'].get_external_documents()
 
-    return jsonify(documents_list), 200
+        if not documents_list:
+            return jsonify({"error": "Aucun document trouvé dans la base de données"}), 404
+
+        return jsonify(documents_list), 200
+    
+    except Exception as e:
+        return jsonify({"error": f"Erreur lors de la récupération des documents : {e}"}), 500
+
 
 
 @app.route(f'{root}/external_data', methods=['PUT'])
